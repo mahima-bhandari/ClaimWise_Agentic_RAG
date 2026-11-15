@@ -4,8 +4,10 @@ from pathlib import Path
 
 import pymupdf
 
+from .ocr import extract_page_text_with_ocr
 
-# Pages with fewer characters than this are flagged for OCR review.
+
+# Pages with fewer characters than this are flagged for OCR.
 MIN_TEXT_CHARS_FOR_OCR = 40
 
 
@@ -17,6 +19,7 @@ class PageExtraction:
     text: str
     character_count: int
     needs_ocr: bool
+    extraction_method: str
 
 
 @dataclass
@@ -32,7 +35,8 @@ class PDFExtractionResult:
 
     @property
     def pages_requiring_ocr(self) -> list[int]:
-        """Return page numbers flagged for OCR."""
+        """Return page numbers that still need OCR."""
+
         return [
             page.page_number
             for page in self.pages
@@ -40,12 +44,15 @@ class PDFExtractionResult:
         ]
 
 
-def extract_pdf(pdf_path: str | Path) -> PDFExtractionResult:
+def extract_pdf(
+    pdf_path: str | Path,
+    enable_ocr: bool = True,
+    ocr_language: str = "eng",
+    ocr_dpi: int = 200,
+) -> PDFExtractionResult:
     """
-    Validate a PDF and extract its text page by page.
-
-    Pages with very little extracted text are flagged
-    for possible OCR processing.
+    Validate a PDF, extract native text and apply OCR
+    to pages with insufficient native text.
     """
 
     pdf_path = Path(pdf_path)
@@ -66,38 +73,62 @@ def extract_pdf(pdf_path: str | Path) -> PDFExtractionResult:
     try:
         with pymupdf.open(str(pdf_path)) as document:
 
-            # 4. Check whether the PDF is password protected.
+            # 4. Check password protection.
             if document.needs_pass:
                 raise ValueError(
-                    "This PDF is password protected. "
-                    "Please provide an accessible PDF."
+                    "This PDF is password protected."
                 )
 
-            # 5. Read document metadata.
+            # 5. Read metadata.
             metadata = document.metadata or {}
 
-            # 6. Extract text page by page.
+            # 6. Process each page.
             for page_index, page in enumerate(document):
 
-                text = page.get_text("text", sort=True)
+                # First attempt: native text extraction.
+                native_text = page.get_text(
+                    "text",
+                    sort=True,
+                ).strip()
 
-                character_count = len(text.strip())
+                final_text = native_text
+                extraction_method = "native"
 
-                # 7. Flag pages with very little extracted text.
+                # 7. Decide whether OCR is required.
+                if (
+                    enable_ocr
+                    and len(native_text) < MIN_TEXT_CHARS_FOR_OCR
+                ):
+                    ocr_text = extract_page_text_with_ocr(
+                        page=page,
+                        language=ocr_language,
+                        dpi=ocr_dpi,
+                    )
+
+                    # Keep whichever extraction produced
+                    # more usable text.
+                    if len(ocr_text) > len(native_text):
+                        final_text = ocr_text
+                        extraction_method = "ocr"
+
+                character_count = len(final_text)
+
+                # 8. Check whether the page still lacks text.
                 needs_ocr = (
                     character_count < MIN_TEXT_CHARS_FOR_OCR
                 )
 
-                page_result = PageExtraction(
-                    page_number=page_index + 1,
-                    text=text,
-                    character_count=character_count,
-                    needs_ocr=needs_ocr,
+                extracted_pages.append(
+                    PageExtraction(
+                        page_number=page_index + 1,
+                        text=final_text,
+                        character_count=character_count,
+                        needs_ocr=needs_ocr,
+                        extraction_method=extraction_method,
+                    )
                 )
 
-                extracted_pages.append(page_result)
-
-            # 8. Return structured extraction results.
+            # 9. Return structured results.
             return PDFExtractionResult(
                 file_path=str(pdf_path.resolve()),
                 file_name=pdf_path.name,
@@ -114,6 +145,9 @@ def extract_pdf(pdf_path: str | Path) -> PDFExtractionResult:
         raise ValueError(
             "The PDF is invalid, corrupted or unreadable."
         ) from error
+
+    except RuntimeError:
+        raise
 
     except Exception as error:
         raise RuntimeError(
