@@ -92,6 +92,30 @@ def initialize_database(
                 UNIQUE (content_hash, source_type)
             );
 
+            CREATE TABLE IF NOT EXISTS document_chunks (
+                chunk_id TEXT PRIMARY KEY,
+
+                document_id TEXT NOT NULL,
+
+                chunk_index INTEGER NOT NULL
+                    CHECK (chunk_index >= 0),
+
+                text TEXT NOT NULL
+                    CHECK (length(trim(text)) > 0),
+
+                page_number INTEGER NOT NULL
+                    CHECK (page_number >= 1),
+
+                estimated_tokens INTEGER NOT NULL
+                    CHECK (estimated_tokens >= 0),
+
+                FOREIGN KEY (document_id)
+                    REFERENCES documents(document_id)
+                    ON DELETE CASCADE,
+
+                UNIQUE (document_id, chunk_index)
+            );
+            
             CREATE INDEX IF NOT EXISTS
                 idx_documents_policy_group
             ON documents(policy_group_id);
@@ -99,6 +123,14 @@ def initialize_database(
             CREATE INDEX IF NOT EXISTS
                 idx_documents_uploaded_at
             ON documents(uploaded_at);
+            
+            CREATE INDEX IF NOT EXISTS
+                idx_chunks_document_id
+            ON document_chunks(document_id);
+
+            CREATE INDEX IF NOT EXISTS
+                idx_chunks_page_number
+            ON document_chunks(document_id, page_number);
             """
         )
 
