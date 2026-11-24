@@ -158,3 +158,36 @@ def delete_chunks_for_document(
 
     finally:
         connection.close()
+
+
+def get_all_chunks(
+    database_path: str | Path | None = None,
+) -> list[dict]:
+    """
+    Retrieve all chunks from all documents.
+
+    Returns chunks ordered by document ID
+    and their original chunk order.
+    """
+
+    connection = get_connection(database_path)
+
+    try:
+        results = connection.execute(
+            """
+            SELECT
+                chunk_id,
+                document_id,
+                chunk_index,
+                text,
+                page_number,
+                estimated_tokens
+            FROM document_chunks
+            ORDER BY document_id, chunk_index
+            """
+        ).fetchall()
+
+        return [dict(row) for row in results]
+
+    finally:
+        connection.close()
